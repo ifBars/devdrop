@@ -12,6 +12,12 @@ Git still owns source history. Devdrop owns the workspace map.
 cargo install devdrop
 ```
 
+To install directly from GitHub:
+
+```powershell
+cargo install --git https://github.com/ifBars/devdrop devdrop
+```
+
 ## Use it
 
 ```powershell

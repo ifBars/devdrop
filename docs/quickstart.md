@@ -11,6 +11,12 @@ Devdrop has two pieces:
 cargo install devdrop
 ```
 
+To install from the GitHub repository:
+
+```powershell
+cargo install --git https://github.com/ifBars/devdrop devdrop
+```
+
 ## Initialize a workspace
 
 ```powershell
