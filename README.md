@@ -52,3 +52,4 @@ bun run typecheck
 - [Relay API](docs/api.md)
 - [Architecture](docs/architecture.md)
 - [Product brief](docs/product-brief.md)
+- [Release](docs/release.md)

@@ -1,15 +1,19 @@
 name: publish crate
 
 on:
+  workflow_dispatch:
   release:
     types: [published]
 
 jobs:
   crates-io:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - run: cargo publish --manifest-path apps/cli/Cargo.toml --dry-run
       - run: cargo publish --manifest-path apps/cli/Cargo.toml --token "$CARGO_REGISTRY_TOKEN"
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
