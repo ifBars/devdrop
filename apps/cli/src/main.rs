@@ -8,12 +8,14 @@ use std::{
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use ignore::WalkBuilder;
+use keyring::Entry as KeyringEntry;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 const DEFAULT_RELAY: &str = "https://devdrop-relay.ifbars.workers.dev";
 const DEFAULT_MAX_BLOB_BYTES: u64 = 1_048_576;
+const KEYRING_SERVICE: &str = "devdrop";
 
 #[derive(Parser)]
 #[command(name = "devdrop")]
@@ -43,7 +45,7 @@ enum Command {
         #[arg(long, default_value = DEFAULT_RELAY)]
         relay: String,
         #[arg(long, env = "DEVDROP_TOKEN")]
-        token: String,
+        token: Option<String>,
         #[arg(long, default_value_t = DEFAULT_MAX_BLOB_BYTES)]
         max_blob_bytes: u64,
         #[arg(long)]
@@ -57,15 +59,37 @@ enum Command {
         #[arg(long)]
         relay: Option<String>,
         #[arg(long, env = "DEVDROP_TOKEN")]
-        token: String,
+        token: Option<String>,
         #[arg(long)]
         force: bool,
         #[arg(long)]
         directories_only: bool,
     },
+    Login {
+        #[arg(long, default_value = DEFAULT_RELAY)]
+        relay: String,
+        #[arg(long, env = "DEVDROP_TOKEN")]
+        token: Option<String>,
+    },
+    Logout {
+        #[arg(long, default_value = DEFAULT_RELAY)]
+        relay: String,
+    },
+    Auth {
+        #[command(subcommand)]
+        command: AuthCommand,
+    },
     Status {
         #[arg(long, default_value = ".")]
         root: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
+enum AuthCommand {
+    Status {
+        #[arg(long, default_value = DEFAULT_RELAY)]
+        relay: String,
     },
 }
 
@@ -169,6 +193,11 @@ async fn main() -> Result<()> {
             force,
             directories_only,
         } => hydrate(&root, workspace_id, relay, &token, force, directories_only).await?,
+        Command::Login { relay, token } => login(&relay, token).await?,
+        Command::Logout { relay } => logout(&relay)?,
+        Command::Auth { command } => match command {
+            AuthCommand::Status { relay } => auth_status(&relay)?,
+        },
         Command::Status { root } => status(&root)?,
     }
 
@@ -210,13 +239,14 @@ fn scan_command(root: &Path, pretty: bool) -> Result<()> {
 async fn push(
     root: &Path,
     relay: &str,
-    token: &str,
+    token: &Option<String>,
     max_blob_bytes: u64,
     no_blobs: bool,
 ) -> Result<()> {
     let root = normalize_root(root)?;
     let config = read_or_create_config(&root)?;
     let mut state = read_state(&root)?;
+    let token = resolve_auth_token(relay, token.as_deref())?;
     let client = reqwest::Client::new();
 
     let workspace_id = match state.as_ref() {
@@ -224,7 +254,7 @@ async fn push(
         None => {
             let response = client
                 .post(format!("{}/v1/workspaces", relay.trim_end_matches('/')))
-                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header(AUTHORIZATION, bearer(&token))
                 .header(CONTENT_TYPE, "application/json")
                 .json(&serde_json::json!({
                     "name": config.name,
@@ -269,7 +299,7 @@ async fn push(
                 .count(),
         }
     } else {
-        upload_blobs(&client, relay, token, &root, &manifest, max_blob_bytes).await?
+        upload_blobs(&client, relay, &token, &root, &manifest, max_blob_bytes).await?
     };
 
     let response = client
@@ -278,7 +308,7 @@ async fn push(
             relay.trim_end_matches('/'),
             workspace_id
         ))
-        .header(AUTHORIZATION, format!("Bearer {token}"))
+        .header(AUTHORIZATION, bearer(&token))
         .header(CONTENT_TYPE, "application/json")
         .json(&manifest)
         .send()
@@ -310,7 +340,7 @@ async fn hydrate(
     root: &Path,
     workspace_id: Option<String>,
     relay: Option<String>,
-    token: &str,
+    token: &Option<String>,
     force: bool,
     directories_only: bool,
 ) -> Result<()> {
@@ -324,6 +354,7 @@ async fn hydrate(
     let relay = relay
         .or_else(|| state.as_ref().map(|existing| existing.relay.clone()))
         .unwrap_or_else(|| DEFAULT_RELAY.to_string());
+    let token = resolve_auth_token(&relay, token.as_deref())?;
     let client = reqwest::Client::new();
 
     let response = client
@@ -332,7 +363,7 @@ async fn hydrate(
             relay.trim_end_matches('/'),
             workspace_id
         ))
-        .header(AUTHORIZATION, format!("Bearer {token}"))
+        .header(AUTHORIZATION, bearer(&token))
         .send()
         .await
         .context("fetching manifest")?;
@@ -349,7 +380,7 @@ async fn hydrate(
     let summary = hydrate_manifest(
         &client,
         &relay,
-        token,
+        &token,
         &root,
         &current.manifest,
         force,
@@ -382,6 +413,71 @@ async fn hydrate(
     Ok(())
 }
 
+async fn login(relay: &str, token: Option<String>) -> Result<()> {
+    let relay = normalize_relay(relay);
+    let token = match token {
+        Some(token) if !token.trim().is_empty() => token,
+        _ => rpassword::prompt_password("Relay token: ").context("reading relay token")?,
+    };
+
+    if token.trim().is_empty() {
+        bail!("relay token cannot be empty");
+    }
+
+    validate_token(&relay, &token).await?;
+    keyring_entry(&relay)?
+        .set_password(token.trim())
+        .with_context(|| format!("storing token for {relay}"))?;
+    println!("stored relay token for {relay}");
+    Ok(())
+}
+
+fn logout(relay: &str) -> Result<()> {
+    let relay = normalize_relay(relay);
+    match keyring_entry(&relay)?.delete_credential() {
+        Ok(()) => println!("removed relay token for {relay}"),
+        Err(_) => println!("no stored relay token for {relay}"),
+    }
+    Ok(())
+}
+
+fn auth_status(relay: &str) -> Result<()> {
+    let relay = normalize_relay(relay);
+    println!("relay: {relay}");
+    println!(
+        "env token: {}",
+        if std::env::var("DEVDROP_TOKEN").is_ok() {
+            "present"
+        } else {
+            "missing"
+        }
+    );
+    match stored_token(&relay) {
+        Ok(Some(_)) => println!("stored token: present"),
+        Ok(None) => println!("stored token: missing"),
+        Err(error) => println!("stored token: unavailable ({error})"),
+    }
+    Ok(())
+}
+
+async fn validate_token(relay: &str, token: &str) -> Result<()> {
+    let response = reqwest::Client::new()
+        .get(format!("{}/v1/auth/check", relay.trim_end_matches('/')))
+        .header(AUTHORIZATION, bearer(token))
+        .send()
+        .await
+        .context("checking relay token")?;
+
+    if !response.status().is_success() {
+        bail!(
+            "relay token check failed: {} {}",
+            response.status(),
+            response.text().await?
+        );
+    }
+    Ok(())
+}
+
 fn status(root: &Path) -> Result<()> {
     let root = normalize_root(root)?;
     let config = read_or_create_config(&root)?;
@@ -402,6 +498,46 @@ fn status(root: &Path) -> Result<()> {
         None => println!("workspace: not pushed yet"),
     }
     Ok(())
+}
+
+fn resolve_auth_token(relay: &str, explicit: Option<&str>) -> Result<String> {
+    if let Some(token) = explicit.filter(|token| !token.trim().is_empty()) {
+        return Ok(token.trim().to_string());
+    }
+    if let Ok(token) = std::env::var("DEVDROP_TOKEN")
+        && !token.trim().is_empty()
+    {
+        return Ok(token.trim().to_string());
+    }
+    if let Some(token) = stored_token(relay)? {
+        return Ok(token);
+    }
+
+    bail!(
+        "no relay token found; pass --token, set DEVDROP_TOKEN, or run `devdrop login --relay {}`",
+        normalize_relay(relay)
+    )
+}
+
+fn stored_token(relay: &str) -> Result<Option<String>> {
+    match keyring_entry(&normalize_relay(relay))?.get_password() {
+        Ok(token) if !token.trim().is_empty() => Ok(Some(token)),
+        Ok(_) => Ok(None),
+        Err(_) => Ok(None),
+    }
+}
+
+fn keyring_entry(relay: &str) -> Result<KeyringEntry> {
+    KeyringEntry::new(KEYRING_SERVICE, &normalize_relay(relay))
+        .context("opening OS credential store")
+}
+
+fn normalize_relay(relay: &str) -> String {
+    relay.trim().trim_end_matches('/').to_string()
+}
+
+fn bearer(token: &str) -> String {
+    format!("Bearer {}", token.trim())
 }
 
 async fn upload_blobs(
@@ -757,6 +893,14 @@ mod tests {
         assert_eq!(
             hash_bytes(b"devdrop"),
             "83ef5a1b124e07cf450d87a6f2fe2884adfda5730a9a5deae893b1d349606e87"
+        );
+    }
+
+    #[test]
+    fn normalize_relay_trims_trailing_slash() {
+        assert_eq!(
+            normalize_relay(" https://devdrop-relay.ifbars.workers.dev/ "),
+            "https://devdrop-relay.ifbars.workers.dev"
         );
     }
 }

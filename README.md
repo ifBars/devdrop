@@ -9,14 +9,14 @@ Git still owns source history. Devdrop owns the workspace map.
 ## Install
 
 ```powershell
-cargo install --git https://github.com/ifBars/devdrop devdrop
+cargo install devdrop --locked
 ```
 
 ## Use it
 
 ```powershell
 devdrop init --root C:\Code --name "Desktop"
-$env:DEVDROP_TOKEN = "<relay-token>"
+devdrop login
 devdrop push --root C:\Code
 devdrop hydrate --root C:\Code-Restored --workspace-id "<workspace-id>"
 ```
@@ -26,6 +26,8 @@ The hosted test relay is:
 ```text
 https://devdrop-relay.ifbars.workers.dev
 ```
+
+It is the default relay, so `--relay` is optional unless you run your own relay.
 
 By default, `push` uploads files up to 1 MiB and skips generated or private local state such as `.git/`, `.devdrop/`, `node_modules/`, `target/`, `internal/`, and local deployment token files. `hydrate` recreates directories and downloads available blobs without overwriting conflicting files unless `--force` is passed.
 

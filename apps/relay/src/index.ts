@@ -165,6 +165,10 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
 
   const segments = url.pathname.split("/").filter(Boolean);
 
+  if (request.method === "GET" && url.pathname === "/v1/auth/check") {
+    return json({ ok: true, authenticated: true });
+  }
+
   if (request.method === "POST" && url.pathname === "/v1/workspaces") {
     return createWorkspace(request, env, ctx);
   }

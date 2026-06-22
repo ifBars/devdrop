@@ -8,7 +8,7 @@ Devdrop has two pieces:
 ## Install the CLI
 
 ```powershell
-cargo install --git https://github.com/ifBars/devdrop devdrop
+cargo install devdrop --locked
 ```
 
 ## Initialize a workspace
@@ -26,12 +26,14 @@ Both are local workspace files. `.devdrop/` is ignored by Git.
 
 ## Push a workspace
 
-Set `DEVDROP_TOKEN` to a valid relay token, then push:
+Sign in once, then push:
 
 ```powershell
-$env:DEVDROP_TOKEN = "<token>"
+devdrop login
 devdrop push --root C:\Code
 ```
+
+`devdrop login` stores the relay token in the operating system credential store. `--token` and `DEVDROP_TOKEN` still work for CI and temporary sessions.
 
 `push` sends the manifest and uploads file blobs up to 1 MiB. Larger files still appear in the manifest, but their contents are not uploaded by default.
 
@@ -40,7 +42,6 @@ devdrop push --root C:\Code
 Use the workspace id printed by `push`:
 
 ```powershell
-$env:DEVDROP_TOKEN = "<token>"
 devdrop hydrate --root C:\Code-Restored --workspace-id "<workspace-id>"
 ```
 
@@ -59,6 +60,14 @@ Invoke-RestMethod https://devdrop-relay.ifbars.workers.dev/health
 ```
 
 The health endpoint does not require authentication.
+
+The hosted relay URL is the default:
+
+```text
+https://devdrop-relay.ifbars.workers.dev
+```
+
+Pass `--relay` only when using a different relay.
 
 ## What gets skipped
 

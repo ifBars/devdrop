@@ -34,6 +34,7 @@ Lazy file hydration is part of the long-term product, but a virtual filesystem i
 ## Public API
 
 - `GET /health`
+- `GET /v1/auth/check`
 - `POST /v1/workspaces`
 - `GET /v1/workspaces/:workspaceId`
 - `PUT /v1/workspaces/:workspaceId/manifest`

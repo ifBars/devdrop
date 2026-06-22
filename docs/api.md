@@ -20,6 +20,14 @@ GET /health
 
 Returns service status and D1 connectivity.
 
+## Auth check
+
+```http
+GET /v1/auth/check
+```
+
+Returns `200 OK` when the bearer token is valid. The CLI uses this during `devdrop login` before storing a relay token locally.
+
 ## Workspaces
 
 ```http
