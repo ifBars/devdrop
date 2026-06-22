@@ -7,7 +7,7 @@ It scans a code root, skips generated and private local state, pushes a manifest
 ## Install
 
 ```powershell
-cargo install devdrop
+cargo install --git https://github.com/ifBars/devdrop devdrop
 ```
 
 ## Basic flow

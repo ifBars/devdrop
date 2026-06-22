@@ -8,12 +8,6 @@ Devdrop has two pieces:
 ## Install the CLI
 
 ```powershell
-cargo install devdrop
-```
-
-To install from the GitHub repository:
-
-```powershell
 cargo install --git https://github.com/ifBars/devdrop devdrop
 ```
 
