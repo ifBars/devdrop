@@ -6,7 +6,7 @@ The local client scans a code root and builds a manifest. It respects Git ignore
 
 Hydration runs in the opposite direction. It fetches the latest manifest for a workspace, creates directories, downloads available blobs, and refuses to overwrite conflicting files unless `--force` is passed.
 
-The CLI writes new local state under `.pathstash/` and reads legacy `.devdrop/` state during the rename. The same compatibility rule applies to `.pathstashignore` and `.devdropignore`.
+The CLI writes local state under `.pathstash/` and reads project ignore rules from `.pathstashignore`.
 
 ## Relay
 
@@ -17,7 +17,7 @@ The relay stores workspace metadata and content-addressed blobs.
 - Queue: async event/audit path
 - Durable Objects: per-workspace live session coordination
 
-The current hosted relay still uses the `devdrop-relay` worker name while the project moves to PathStash. Production auth should move from shared bearer tokens to device grants, short-lived tokens, and encrypted local state.
+The hosted relay uses the `pathstash-relay` worker name. Auth is account scoped: users create an account, receive an initial token once, and can create or revoke additional tokens.
 
 ## Why the filesystem is not virtual yet
 
@@ -29,7 +29,7 @@ Lazy file hydration is part of the long-term product, but a virtual filesystem i
 - Blob keys are the SHA-256 of the file body.
 - `push` uploads blobs before publishing the manifest, so a newly fetched manifest should point to available content.
 - Large files are visible in the manifest but skipped as blobs unless the user raises `--max-blob-bytes`.
-- `.pathstash/`, `.devdrop/`, generated folders, and private internal folders stay local by default.
+- `.pathstash/`, generated folders, and private internal folders stay local by default.
 
 ## Public API
 

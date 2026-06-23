@@ -36,4 +36,10 @@ cargo install pathstash --locked
 pathstash --version
 ```
 
-The legacy `devdrop` crate is not the forward release target. Keep it available for existing users unless a compatibility wrapper is needed.
+The TypeScript CLI package is published from `packages/npm-cli` as `pathstash`. Build it before publishing:
+
+```powershell
+cd packages\npm-cli
+bun install
+bun run build
+```

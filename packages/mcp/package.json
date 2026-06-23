@@ -1,0 +1,35 @@
+{
+  "name": "@pathstash/mcp",
+  "version": "0.1.0",
+  "description": "MCP server for PathStash workspace context and sync metadata.",
+  "type": "module",
+  "bin": {
+    "pathstash-mcp": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "prepublishOnly": "bun run build"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ifBars/pathstash.git",
+    "directory": "packages/mcp"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.2.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.16.5",
+    "typescript": "^5.8.3"
+  }
+}

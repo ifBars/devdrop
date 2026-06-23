@@ -2,12 +2,12 @@
 
 ## Cloudflare resources
 
-The current hosted relay still uses the original Devdrop resource names while the public project moves to PathStash:
+The hosted relay uses these Cloudflare resources:
 
-- Worker: `devdrop-relay`
-- D1 database: `devdrop-meta`
-- R2 bucket: `devdrop-objects`
-- Queue: `devdrop-events`
+- Worker: `pathstash-relay`
+- D1 database: `pathstash-meta`
+- R2 bucket: `pathstash-objects`
+- Queue: `pathstash-events`
 - Durable Object: `WorkspaceSession`
 
 ## Commands
@@ -16,7 +16,7 @@ The current hosted relay still uses the original Devdrop resource names while th
 cd apps\relay
 bun install
 bun run cf:types
-bunx wrangler secret put DEV_AUTH_TOKEN
+bunx wrangler secret put RELAY_ADMIN_TOKEN
 bunx wrangler deploy --minify
 ```
 

@@ -1,6 +1,6 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "devdrop-relay",
+  "name": "pathstash-relay",
   "main": "src/index.ts",
   "compatibility_date": "2025-10-11",
   "compatibility_flags": ["nodejs_compat"],
@@ -14,27 +14,27 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "devdrop-meta",
-      "database_id": "682450b4-bd1f-401d-9286-2f774abe1c32",
+      "database_name": "pathstash-meta",
+      "database_id": "9253d7c8-ad49-4f2e-b885-41feda537377",
       "migrations_dir": "migrations"
     }
   ],
   "r2_buckets": [
     {
       "binding": "OBJECTS",
-      "bucket_name": "devdrop-objects"
+      "bucket_name": "pathstash-objects"
     }
   ],
   "queues": {
     "producers": [
       {
         "binding": "EVENT_QUEUE",
-        "queue": "devdrop-events"
+        "queue": "pathstash-events"
       }
     ],
     "consumers": [
       {
-        "queue": "devdrop-events",
+        "queue": "pathstash-events",
         "max_batch_size": 10,
         "max_batch_timeout": 30
       }

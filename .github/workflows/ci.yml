@@ -26,3 +26,39 @@ jobs:
         working-directory: apps/relay
       - run: bun run typecheck
         working-directory: apps/relay
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+        working-directory: apps/web
+      - run: bun run typecheck
+        working-directory: apps/web
+      - run: bun run build
+        working-directory: apps/web
+
+  npm-cli:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+        working-directory: packages/npm-cli
+      - run: bun run typecheck
+        working-directory: packages/npm-cli
+      - run: bun run build
+        working-directory: packages/npm-cli
+
+  mcp:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+        working-directory: packages/mcp
+      - run: bun run typecheck
+        working-directory: packages/mcp
+      - run: bun run build
+        working-directory: packages/mcp

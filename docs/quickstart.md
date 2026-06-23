@@ -11,6 +11,21 @@ PathStash has two pieces:
 cargo install pathstash --locked
 ```
 
+Node users can use the TypeScript CLI package:
+
+```powershell
+npx pathstash help
+bunx pathstash help
+```
+
+## Create an account
+
+```powershell
+pathstash signup --email you@example.com
+```
+
+Signup creates an account, returns an initial token, and stores that token in the operating system credential store.
+
 ## Initialize a workspace
 
 ```powershell
@@ -22,8 +37,6 @@ This creates:
 - `.pathstash/config.json`
 - `.pathstashignore`
 
-PathStash also reads legacy `.devdrop/` and `.devdropignore` files so existing users do not lose state during the rename.
-
 ## Push a workspace
 
 Sign in once, then push:
@@ -33,9 +46,9 @@ pathstash login
 pathstash push --root C:\Code
 ```
 
-`pathstash login` stores the relay token in the operating system credential store. `--token`, `PATHSTASH_TOKEN`, and the legacy `DEVDROP_TOKEN` still work for CI and temporary sessions.
+`pathstash login` stores an existing token in the operating system credential store. `--token` and `PATHSTASH_TOKEN` work for CI and temporary sessions.
 
-`push` sends the manifest and uploads file blobs up to 1 MiB. Larger files still appear in the manifest, but their contents are not uploaded by default.
+`push` sends the manifest and uploads file blobs up to 64 MiB by default. Larger files still appear in the manifest, but their contents are not uploaded unless you raise `--max-blob-bytes`.
 
 ## Hydrate on another machine
 
@@ -56,15 +69,13 @@ pathstash hydrate --root C:\Code-Restored --workspace-id "<workspace-id>" --dire
 ## Check the hosted relay
 
 ```powershell
-Invoke-RestMethod https://devdrop-relay.ifbars.workers.dev/health
+Invoke-RestMethod https://pathstash-relay.ifbars.workers.dev/health
 ```
 
 The health endpoint does not require authentication.
 
-The hosted relay URL is still the default while the service moves to the PathStash name:
-
 ```text
-https://devdrop-relay.ifbars.workers.dev
+https://pathstash-relay.ifbars.workers.dev
 ```
 
 Pass `--relay` only when using a different relay.
@@ -75,7 +86,6 @@ The default ignore set skips generated and private local state:
 
 - `.git/`
 - `.pathstash/`
-- `.devdrop/`
 - `node_modules/`
 - `target/`
 - `dist/`

@@ -1,0 +1,31 @@
+{
+  "name": "pathstash",
+  "version": "0.1.0",
+  "description": "Sync developer workspace roots, selected files, devices, and encrypted secret metadata across machines.",
+  "type": "module",
+  "bin": {
+    "pathstash": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "prepublishOnly": "bun run build"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ifBars/pathstash.git",
+    "directory": "packages/npm-cli"
+  },
+  "devDependencies": {
+    "@types/node": "^22.16.5",
+    "typescript": "^5.8.3"
+  }
+}

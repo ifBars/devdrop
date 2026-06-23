@@ -1,0 +1,14 @@
+# PathStash
+
+PathStash is Dropbox for modern software developers. It keeps the layer around Git available across machines and agents: workspace roots, selected files, devices, encrypted secrets, manifests, and large file pointers.
+
+## Useful links
+
+- Quickstart: https://github.com/ifBars/pathstash/blob/main/docs/quickstart.md
+- Relay API: https://github.com/ifBars/pathstash/blob/main/docs/api.md
+- Agent guide: https://github.com/ifBars/pathstash/blob/main/docs/agents.md
+- MCP package: https://github.com/ifBars/pathstash/tree/main/packages/mcp
+
+## Agent guidance
+
+Use markdown endpoints for compact context and JSON endpoints for exact state. Never send plaintext secrets to the relay; PathStash secret values are encrypted locally before storage.

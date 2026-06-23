@@ -3,10 +3,10 @@
 Base URL:
 
 ```text
-https://devdrop-relay.ifbars.workers.dev
+https://pathstash-relay.ifbars.workers.dev
 ```
 
-The hosted relay still uses the Devdrop worker URL during the PathStash rename. Authenticated endpoints expect:
+Authenticated endpoints expect:
 
 ```text
 Authorization: Bearer <token>
@@ -27,6 +27,35 @@ GET /v1/auth/check
 ```
 
 Returns `200 OK` when the bearer token is valid. The CLI uses this during `pathstash login` before storing a relay token locally.
+
+## Accounts
+
+```http
+POST /v1/accounts
+```
+
+Creates an account and returns an initial token once. Clients should store that token locally and treat it like a password.
+
+```json
+{
+  "email": "you@example.com",
+  "name": "Alex Developer",
+  "deviceLabel": "MacBook Pro"
+}
+```
+
+## Devices and tokens
+
+```http
+GET /v1/devices
+POST /v1/devices
+DELETE /v1/devices/:deviceId
+GET /v1/tokens
+POST /v1/tokens
+DELETE /v1/tokens/:tokenId
+```
+
+Devices and tokens are account scoped.
 
 ## Workspaces
 
@@ -69,7 +98,7 @@ Returns the current manifest.
 PUT /v1/blobs/:sha256
 ```
 
-Uploads a blob. The relay verifies that the request body matches the SHA-256 path before storing it.
+Uploads a content-addressed blob. The relay streams the request body into R2 and stores the SHA-256 from the URL as metadata. Clients verify downloaded bytes against the manifest hash.
 
 ```http
 GET /v1/blobs/:sha256
@@ -77,7 +106,18 @@ GET /v1/blobs/:sha256
 
 Downloads a blob.
 
-The CLI uses these routes for files that have a SHA-256 in the manifest. Files without a hash were intentionally skipped by the client, usually because they were larger than the configured blob limit.
+The CLI uses these routes for files that have a SHA-256 in the manifest. Files larger than the configured blob limit remain in the manifest but are not uploaded.
+
+## Secrets
+
+```http
+GET /v1/workspaces/:workspaceId/secrets
+GET /v1/workspaces/:workspaceId/secrets/:name
+PUT /v1/workspaces/:workspaceId/secrets/:name
+DELETE /v1/workspaces/:workspaceId/secrets/:name
+```
+
+Secrets are stored as ciphertext. The relay requires `ciphertext`, `nonce`, and `keyId`; plaintext secret values should never be sent to the API.
 
 ## Workspace sessions
 

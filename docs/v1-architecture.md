@@ -119,18 +119,11 @@ V1 should add a schema boundary between public API objects and storage rows. The
 
 New local state lives under `.pathstash/`.
 
-During the rename, the CLI should keep reading `.devdrop/` and `.devdropignore`, then write new state to `.pathstash/` after the next successful push or hydrate.
+The CLI stores local state under `.pathstash/`.
 
-## Migration from Devdrop
+## Public naming
 
-The migration should be gradual:
-
-1. Publish `pathstash` as the forward crate and CLI.
-2. Keep the `devdrop` crate available for existing users.
-3. Read legacy local state and env vars.
-4. Move docs, repo name, and release automation to PathStash.
-5. Add a PathStash relay domain when the domain is owned.
-6. Keep the old worker URL alive long enough for existing installs.
+PathStash is the public product name across the CLI, relay, web app, docs, crate, npm package, and repository.
 
 ## V1 cut line
 

@@ -5,22 +5,27 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use aes_gcm::{
+    Aes256Gcm, Nonce,
+    aead::{Aead, KeyInit},
+};
 use anyhow::{Context, Result, bail};
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use clap::{Parser, Subcommand};
 use ignore::WalkBuilder;
 use keyring::Entry as KeyringEntry;
-use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
+use rand::{RngCore, rngs::OsRng};
+use reqwest::header::{AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use tokio_util::codec::{BytesCodec, FramedRead};
 
-const DEFAULT_RELAY: &str = "https://devdrop-relay.ifbars.workers.dev";
-const DEFAULT_MAX_BLOB_BYTES: u64 = 1_048_576;
+const DEFAULT_RELAY: &str = "https://pathstash-relay.ifbars.workers.dev";
+const DEFAULT_MAX_BLOB_BYTES: u64 = 64 * 1024 * 1024;
 const KEYRING_SERVICE: &str = "pathstash";
-const LEGACY_KEYRING_SERVICE: &str = "devdrop";
+const SECRET_KEYRING_SERVICE: &str = "pathstash-secrets";
 const STATE_DIR: &str = ".pathstash";
-const LEGACY_STATE_DIR: &str = ".devdrop";
 const IGNORE_FILE: &str = ".pathstashignore";
-const LEGACY_IGNORE_FILE: &str = ".devdropignore";
 
 #[derive(Parser)]
 #[command(name = "pathstash")]
@@ -32,6 +37,16 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    Signup {
+        #[arg(long, default_value = DEFAULT_RELAY)]
+        relay: String,
+        #[arg(long)]
+        email: String,
+        #[arg(long)]
+        name: Option<String>,
+        #[arg(long)]
+        device_label: Option<String>,
+    },
     Init {
         #[arg(long, default_value = ".")]
         root: PathBuf,
@@ -84,6 +99,14 @@ enum Command {
         #[command(subcommand)]
         command: AuthCommand,
     },
+    Devices {
+        #[command(subcommand)]
+        command: DeviceCommand,
+    },
+    Secrets {
+        #[command(subcommand)]
+        command: SecretCommand,
+    },
     Status {
         #[arg(long, default_value = ".")]
         root: PathBuf,
@@ -95,6 +118,90 @@ enum AuthCommand {
     Status {
         #[arg(long, default_value = DEFAULT_RELAY)]
         relay: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum DeviceCommand {
+    List {
+        #[arg(long, default_value = DEFAULT_RELAY)]
+        relay: String,
+        #[arg(long, env = "PATHSTASH_TOKEN")]
+        token: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum SecretCommand {
+    List {
+        #[arg(long, default_value = ".")]
+        root: PathBuf,
+        #[arg(long)]
+        workspace_id: Option<String>,
+        #[arg(long)]
+        relay: Option<String>,
+        #[arg(long, env = "PATHSTASH_TOKEN")]
+        token: Option<String>,
+    },
+    Set {
+        #[arg(long, default_value = ".")]
+        root: PathBuf,
+        #[arg(long)]
+        workspace_id: Option<String>,
+        #[arg(long)]
+        relay: Option<String>,
+        #[arg(long, env = "PATHSTASH_TOKEN")]
+        token: Option<String>,
+        name: String,
+        #[arg(long)]
+        value: Option<String>,
+    },
+    Get {
+        #[arg(long, default_value = ".")]
+        root: PathBuf,
+        #[arg(long)]
+        workspace_id: Option<String>,
+        #[arg(long)]
+        relay: Option<String>,
+        #[arg(long, env = "PATHSTASH_TOKEN")]
+        token: Option<String>,
+        name: String,
+    },
+    Delete {
+        #[arg(long, default_value = ".")]
+        root: PathBuf,
+        #[arg(long)]
+        workspace_id: Option<String>,
+        #[arg(long)]
+        relay: Option<String>,
+        #[arg(long, env = "PATHSTASH_TOKEN")]
+        token: Option<String>,
+        name: String,
+    },
+    Key {
+        #[command(subcommand)]
+        command: SecretKeyCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum SecretKeyCommand {
+    Export {
+        #[arg(long, default_value = ".")]
+        root: PathBuf,
+        #[arg(long)]
+        workspace_id: Option<String>,
+        #[arg(long)]
+        relay: Option<String>,
+    },
+    Import {
+        #[arg(long, default_value = ".")]
+        root: PathBuf,
+        #[arg(long)]
+        workspace_id: Option<String>,
+        #[arg(long)]
+        relay: Option<String>,
+        key: String,
     },
 }
 
@@ -150,6 +257,25 @@ struct CreateWorkspaceResponse {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateAccountResponse {
+    account: AccountResponse,
+    token: TokenResponse,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AccountResponse {
+    email: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TokenResponse {
+    value: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct ManifestResponse {
     hash: String,
 }
@@ -159,6 +285,46 @@ struct ManifestResponse {
 struct CurrentManifestResponse {
     hash: String,
     manifest: Manifest,
+}
+
+#[derive(Debug, Deserialize)]
+struct DevicesResponse {
+    devices: Vec<DeviceResponse>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DeviceResponse {
+    id: String,
+    label: String,
+    #[serde(rename = "last_seen_at")]
+    last_seen_at: Option<String>,
+    #[serde(rename = "created_at")]
+    created_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SecretsResponse {
+    secrets: Vec<SecretSummary>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SecretSummary {
+    name: String,
+    #[serde(rename = "updated_at")]
+    updated_at: Option<String>,
+    #[serde(rename = "key_id")]
+    key_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SecretResponse {
+    secret: StoredSecret,
+}
+
+#[derive(Debug, Deserialize)]
+struct StoredSecret {
+    ciphertext: String,
+    nonce: String,
 }
 
 #[derive(Debug)]
@@ -181,6 +347,12 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
+        Command::Signup {
+            relay,
+            email,
+            name,
+            device_label,
+        } => signup(&relay, &email, name, device_label).await?,
         Command::Init { root, name } => init(&root, name)?,
         Command::Scan { root, pretty } => scan_command(&root, pretty)?,
         Command::Push {
@@ -202,6 +374,52 @@ async fn main() -> Result<()> {
         Command::Logout { relay } => logout(&relay)?,
         Command::Auth { command } => match command {
             AuthCommand::Status { relay } => auth_status(&relay)?,
+        },
+        Command::Devices { command } => match command {
+            DeviceCommand::List { relay, token } => devices_list(&relay, &token).await?,
+        },
+        Command::Secrets { command } => match command {
+            SecretCommand::List {
+                root,
+                workspace_id,
+                relay,
+                token,
+            } => secrets_list(&root, workspace_id, relay, &token).await?,
+            SecretCommand::Set {
+                root,
+                workspace_id,
+                relay,
+                token,
+                name,
+                value,
+            } => secrets_set(&root, workspace_id, relay, &token, &name, value).await?,
+            SecretCommand::Get {
+                root,
+                workspace_id,
+                relay,
+                token,
+                name,
+            } => secrets_get(&root, workspace_id, relay, &token, &name).await?,
+            SecretCommand::Delete {
+                root,
+                workspace_id,
+                relay,
+                token,
+                name,
+            } => secrets_delete(&root, workspace_id, relay, &token, &name).await?,
+            SecretCommand::Key { command } => match command {
+                SecretKeyCommand::Export {
+                    root,
+                    workspace_id,
+                    relay,
+                } => secrets_key_export(&root, workspace_id, relay)?,
+                SecretKeyCommand::Import {
+                    root,
+                    workspace_id,
+                    relay,
+                    key,
+                } => secrets_key_import(&root, workspace_id, relay, &key)?,
+            },
         },
         Command::Status { root } => status(&root)?,
     }
@@ -238,6 +456,45 @@ fn scan_command(root: &Path, pretty: bool) -> Result<()> {
     } else {
         println!("{}", serde_json::to_string(&manifest)?);
     }
+    Ok(())
+}
+
+async fn signup(
+    relay: &str,
+    email: &str,
+    name: Option<String>,
+    device_label: Option<String>,
+) -> Result<()> {
+    let relay = normalize_relay(relay);
+    let client = reqwest::Client::new();
+    let response = client
+        .post(format!("{}/v1/accounts", relay.trim_end_matches('/')))
+        .header(CONTENT_TYPE, "application/json")
+        .json(&serde_json::json!({
+            "email": email,
+            "name": name,
+            "deviceLabel": device_label.unwrap_or_else(current_device_label),
+        }))
+        .send()
+        .await
+        .context("creating PathStash account")?;
+
+    if !response.status().is_success() {
+        bail!(
+            "signup failed: {} {}",
+            response.status(),
+            response.text().await?
+        );
+    }
+
+    let created = response.json::<CreateAccountResponse>().await?;
+    keyring_entry(&relay)?
+        .set_password(created.token.value.trim())
+        .with_context(|| format!("storing token for {relay}"))?;
+    println!(
+        "created account {} and stored token for {}",
+        created.account.email, relay
+    );
     Ok(())
 }
 
@@ -457,19 +714,239 @@ fn auth_status(relay: &str) -> Result<()> {
             "missing"
         }
     );
-    println!(
-        "DEVDROP_TOKEN: {}",
-        if std::env::var("DEVDROP_TOKEN").is_ok() {
-            "present (legacy)"
-        } else {
-            "missing"
-        }
-    );
     match stored_token(&relay) {
         Ok(Some(_)) => println!("stored token: present"),
         Ok(None) => println!("stored token: missing"),
         Err(error) => println!("stored token: unavailable ({error})"),
     }
+    Ok(())
+}
+
+async fn devices_list(relay: &str, token: &Option<String>) -> Result<()> {
+    let relay = normalize_relay(relay);
+    let token = resolve_auth_token(&relay, token.as_deref())?;
+    let response = reqwest::Client::new()
+        .get(format!("{}/v1/devices", relay.trim_end_matches('/')))
+        .header(AUTHORIZATION, bearer(&token))
+        .send()
+        .await
+        .context("listing devices")?;
+
+    if !response.status().is_success() {
+        bail!(
+            "device list failed: {} {}",
+            response.status(),
+            response.text().await?
+        );
+    }
+
+    let devices = response.json::<DevicesResponse>().await?;
+    for device in devices.devices {
+        println!(
+            "{}\t{}\t{}",
+            device.id,
+            device.label,
+            device
+                .last_seen_at
+                .or(device.created_at)
+                .unwrap_or_else(|| "unknown".to_string())
+        );
+    }
+    Ok(())
+}
+
+async fn secrets_list(
+    root: &Path,
+    workspace_id: Option<String>,
+    relay: Option<String>,
+    token: &Option<String>,
+) -> Result<()> {
+    let (workspace_id, relay) = workspace_context(root, workspace_id, relay)?;
+    let token = resolve_auth_token(&relay, token.as_deref())?;
+    let response = reqwest::Client::new()
+        .get(format!(
+            "{}/v1/workspaces/{}/secrets",
+            relay.trim_end_matches('/'),
+            workspace_id
+        ))
+        .header(AUTHORIZATION, bearer(&token))
+        .send()
+        .await
+        .context("listing secrets")?;
+
+    if !response.status().is_success() {
+        bail!(
+            "secret list failed: {} {}",
+            response.status(),
+            response.text().await?
+        );
+    }
+
+    let secrets = response.json::<SecretsResponse>().await?;
+    for secret in secrets.secrets {
+        println!(
+            "{}\t{}\t{}",
+            secret.name,
+            secret.key_id.unwrap_or_else(|| "unknown-key".to_string()),
+            secret.updated_at.unwrap_or_else(|| "unknown".to_string())
+        );
+    }
+    Ok(())
+}
+
+async fn secrets_set(
+    root: &Path,
+    workspace_id: Option<String>,
+    relay: Option<String>,
+    token: &Option<String>,
+    name: &str,
+    value: Option<String>,
+) -> Result<()> {
+    let (workspace_id, relay) = workspace_context(root, workspace_id, relay)?;
+    let token = resolve_auth_token(&relay, token.as_deref())?;
+    let value = match value {
+        Some(value) => value,
+        None => rpassword::prompt_password(format!("Secret value for {name}: "))
+            .context("reading secret value")?,
+    };
+    let key = get_or_create_secret_key(&relay, &workspace_id)?;
+    let encrypted = encrypt_secret(&key, value.as_bytes())?;
+    let key_id = secret_key_id(&key);
+
+    let response = reqwest::Client::new()
+        .put(format!(
+            "{}/v1/workspaces/{}/secrets/{}",
+            relay.trim_end_matches('/'),
+            workspace_id,
+            url_segment(name)
+        ))
+        .header(AUTHORIZATION, bearer(&token))
+        .header(CONTENT_TYPE, "application/json")
+        .json(&serde_json::json!({
+            "ciphertext": encrypted.ciphertext,
+            "nonce": encrypted.nonce,
+            "keyId": key_id,
+            "format": "aes-256-gcm-local-key-v1",
+            "metadata": {
+                "source": "pathstash-cli"
+            }
+        }))
+        .send()
+        .await
+        .context("storing secret")?;
+
+    if !response.status().is_success() {
+        bail!(
+            "secret set failed: {} {}",
+            response.status(),
+            response.text().await?
+        );
+    }
+
+    println!("stored encrypted secret {name} for workspace {workspace_id}");
+    Ok(())
+}
+
+async fn secrets_get(
+    root: &Path,
+    workspace_id: Option<String>,
+    relay: Option<String>,
+    token: &Option<String>,
+    name: &str,
+) -> Result<()> {
+    let (workspace_id, relay) = workspace_context(root, workspace_id, relay)?;
+    let token = resolve_auth_token(&relay, token.as_deref())?;
+    let response = reqwest::Client::new()
+        .get(format!(
+            "{}/v1/workspaces/{}/secrets/{}",
+            relay.trim_end_matches('/'),
+            workspace_id,
+            url_segment(name)
+        ))
+        .header(AUTHORIZATION, bearer(&token))
+        .send()
+        .await
+        .context("fetching secret")?;
+
+    if !response.status().is_success() {
+        bail!(
+            "secret get failed: {} {}",
+            response.status(),
+            response.text().await?
+        );
+    }
+
+    let stored = response.json::<SecretResponse>().await?;
+    let key = secret_key(&relay, &workspace_id)?;
+    let plaintext = decrypt_secret(&key, &stored.secret.nonce, &stored.secret.ciphertext)?;
+    println!(
+        "{}",
+        String::from_utf8(plaintext).context("secret is not valid UTF-8")?
+    );
+    Ok(())
+}
+
+async fn secrets_delete(
+    root: &Path,
+    workspace_id: Option<String>,
+    relay: Option<String>,
+    token: &Option<String>,
+    name: &str,
+) -> Result<()> {
+    let (workspace_id, relay) = workspace_context(root, workspace_id, relay)?;
+    let token = resolve_auth_token(&relay, token.as_deref())?;
+    let response = reqwest::Client::new()
+        .delete(format!(
+            "{}/v1/workspaces/{}/secrets/{}",
+            relay.trim_end_matches('/'),
+            workspace_id,
+            url_segment(name)
+        ))
+        .header(AUTHORIZATION, bearer(&token))
+        .send()
+        .await
+        .context("deleting secret")?;
+
+    if !response.status().is_success() {
+        bail!(
+            "secret delete failed: {} {}",
+            response.status(),
+            response.text().await?
+        );
+    }
+
+    println!("deleted secret {name} for workspace {workspace_id}");
+    Ok(())
+}
+
+fn secrets_key_export(
+    root: &Path,
+    workspace_id: Option<String>,
+    relay: Option<String>,
+) -> Result<()> {
+    let (workspace_id, relay) = workspace_context(root, workspace_id, relay)?;
+    let key = secret_key(&relay, &workspace_id)?;
+    println!("{}", BASE64.encode(key));
+    Ok(())
+}
+
+fn secrets_key_import(
+    root: &Path,
+    workspace_id: Option<String>,
+    relay: Option<String>,
+    key: &str,
+) -> Result<()> {
+    let (workspace_id, relay) = workspace_context(root, workspace_id, relay)?;
+    let bytes = BASE64
+        .decode(key.trim())
+        .context("secret key must be base64")?;
+    if bytes.len() != 32 {
+        bail!("secret key must decode to 32 bytes");
+    }
+    secret_keyring_entry(&relay, &workspace_id)?
+        .set_password(key.trim())
+        .context("storing secret key")?;
+    println!("imported secret key for workspace {workspace_id}");
     Ok(())
 }
 
@@ -522,11 +999,6 @@ fn resolve_auth_token(relay: &str, explicit: Option<&str>) -> Result<String> {
     {
         return Ok(token.trim().to_string());
     }
-    if let Ok(token) = std::env::var("DEVDROP_TOKEN")
-        && !token.trim().is_empty()
-    {
-        return Ok(token.trim().to_string());
-    }
     if let Some(token) = stored_token(relay)? {
         return Ok(token);
     }
@@ -538,10 +1010,7 @@ fn resolve_auth_token(relay: &str, explicit: Option<&str>) -> Result<String> {
 }
 
 fn stored_token(relay: &str) -> Result<Option<String>> {
-    if let Some(token) = stored_token_for_service(KEYRING_SERVICE, relay)? {
-        return Ok(Some(token));
-    }
-    stored_token_for_service(LEGACY_KEYRING_SERVICE, relay)
+    stored_token_for_service(KEYRING_SERVICE, relay)
 }
 
 fn stored_token_for_service(service: &str, relay: &str) -> Result<Option<String>> {
@@ -560,12 +1029,120 @@ fn keyring_entry_for_service(service: &str, relay: &str) -> Result<KeyringEntry>
     KeyringEntry::new(service, &normalize_relay(relay)).context("opening OS credential store")
 }
 
+fn secret_keyring_entry(relay: &str, workspace_id: &str) -> Result<KeyringEntry> {
+    KeyringEntry::new(
+        SECRET_KEYRING_SERVICE,
+        &format!("{}|{}", normalize_relay(relay), workspace_id),
+    )
+    .context("opening OS credential store")
+}
+
+fn workspace_context(
+    root: &Path,
+    workspace_id: Option<String>,
+    relay: Option<String>,
+) -> Result<(String, String)> {
+    let root = normalize_root(root)?;
+    let state = read_state(&root)?;
+    let workspace_id = workspace_id
+        .or_else(|| state.as_ref().map(|existing| existing.workspace_id.clone()))
+        .context(
+            "workspace id required; pass --workspace-id or run from an initialized PathStash root",
+        )?;
+    let relay = relay
+        .or_else(|| state.as_ref().map(|existing| existing.relay.clone()))
+        .unwrap_or_else(|| DEFAULT_RELAY.to_string());
+    Ok((workspace_id, normalize_relay(&relay)))
+}
+
+struct EncryptedSecret {
+    nonce: String,
+    ciphertext: String,
+}
+
+fn get_or_create_secret_key(relay: &str, workspace_id: &str) -> Result<[u8; 32]> {
+    match secret_key(relay, workspace_id) {
+        Ok(key) => Ok(key),
+        Err(_) => {
+            let mut key = [0_u8; 32];
+            OsRng.fill_bytes(&mut key);
+            secret_keyring_entry(relay, workspace_id)?
+                .set_password(&BASE64.encode(key))
+                .context("storing workspace secret key")?;
+            Ok(key)
+        }
+    }
+}
+
+fn secret_key(relay: &str, workspace_id: &str) -> Result<[u8; 32]> {
+    let encoded = secret_keyring_entry(relay, workspace_id)?
+        .get_password()
+        .context("workspace secret key missing; run `pathstash secrets key import` or set a secret on this device first")?;
+    let bytes = BASE64
+        .decode(encoded.trim())
+        .context("decoding workspace secret key")?;
+    if bytes.len() != 32 {
+        bail!("workspace secret key is invalid");
+    }
+    let mut key = [0_u8; 32];
+    key.copy_from_slice(&bytes);
+    Ok(key)
+}
+
+fn encrypt_secret(key: &[u8; 32], plaintext: &[u8]) -> Result<EncryptedSecret> {
+    let cipher = Aes256Gcm::new_from_slice(key).context("creating secret cipher")?;
+    let mut nonce_bytes = [0_u8; 12];
+    OsRng.fill_bytes(&mut nonce_bytes);
+    let nonce = Nonce::from_slice(&nonce_bytes);
+    let ciphertext = cipher
+        .encrypt(nonce, plaintext)
+        .map_err(|_| anyhow::anyhow!("encrypting secret failed"))?;
+    Ok(EncryptedSecret {
+        nonce: BASE64.encode(nonce_bytes),
+        ciphertext: BASE64.encode(ciphertext),
+    })
+}
+
+fn decrypt_secret(key: &[u8; 32], nonce: &str, ciphertext: &str) -> Result<Vec<u8>> {
+    let cipher = Aes256Gcm::new_from_slice(key).context("creating secret cipher")?;
+    let nonce_bytes = BASE64
+        .decode(nonce.trim())
+        .context("decoding secret nonce")?;
+    let ciphertext = BASE64
+        .decode(ciphertext.trim())
+        .context("decoding secret ciphertext")?;
+    if nonce_bytes.len() != 12 {
+        bail!("secret nonce is invalid");
+    }
+    cipher
+        .decrypt(Nonce::from_slice(&nonce_bytes), ciphertext.as_ref())
+        .map_err(|_| anyhow::anyhow!("decrypting secret failed"))
+}
+
+fn secret_key_id(key: &[u8; 32]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(key);
+    hex::encode(&hasher.finalize()[..8])
+}
+
 fn normalize_relay(relay: &str) -> String {
     relay.trim().trim_end_matches('/').to_string()
 }
 
 fn bearer(token: &str) -> String {
     format!("Bearer {}", token.trim())
+}
+
+fn url_segment(value: &str) -> String {
+    value
+        .bytes()
+        .flat_map(|byte| match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' => {
+                vec![byte as char]
+            }
+            _ => format!("%{byte:02X}").chars().collect(),
+        })
+        .collect()
 }
 
 async fn upload_blobs(
@@ -597,12 +1174,16 @@ async fn upload_blobs(
         }
 
         let path = root.join(entry.path.replace('/', std::path::MAIN_SEPARATOR_STR));
-        let bytes = fs::read(&path).with_context(|| format!("reading {}", path.display()))?;
+        let file = tokio::fs::File::open(&path)
+            .await
+            .with_context(|| format!("opening {}", path.display()))?;
+        let stream = FramedRead::new(file, BytesCodec::new());
         let response = client
             .put(format!("{}/v1/blobs/{}", relay.trim_end_matches('/'), hash))
             .header(AUTHORIZATION, format!("Bearer {token}"))
             .header(CONTENT_TYPE, "application/octet-stream")
-            .body(bytes)
+            .header(CONTENT_LENGTH, entry.size.unwrap_or_default().to_string())
+            .body(reqwest::Body::wrap_stream(stream))
             .send()
             .await
             .with_context(|| format!("uploading blob for {}", entry.path))?;
@@ -719,8 +1300,7 @@ fn build_manifest(root: &Path) -> Result<Manifest> {
         .git_ignore(true)
         .git_exclude(true)
         .parents(true)
-        .add_custom_ignore_filename(IGNORE_FILE)
-        .add_custom_ignore_filename(LEGACY_IGNORE_FILE);
+        .add_custom_ignore_filename(IGNORE_FILE);
 
     for result in builder.build() {
         let item = result?;
@@ -747,11 +1327,7 @@ fn build_manifest(root: &Path) -> Result<Manifest> {
             (EntryKind::Directory, None, None)
         } else {
             let size = metadata.len();
-            let hash = if size <= 1_048_576 {
-                Some(hash_file(path)?)
-            } else {
-                None
-            };
+            let hash = Some(hash_file(path)?);
             (EntryKind::File, Some(size), hash)
         };
 
@@ -776,12 +1352,11 @@ fn build_manifest(root: &Path) -> Result<Manifest> {
 }
 
 fn read_or_create_config(root: &Path) -> Result<Config> {
-    for path in [config_path(root), legacy_config_path(root)] {
-        if path.exists() {
-            let data =
-                fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
-            return Ok(serde_json::from_str(&data)?);
-        }
+    let path = config_path(root);
+    if path.exists() {
+        let data =
+            fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+        return Ok(serde_json::from_str(&data)?);
     }
 
     init(root, None)?;
@@ -791,12 +1366,11 @@ fn read_or_create_config(root: &Path) -> Result<Config> {
 }
 
 fn read_state(root: &Path) -> Result<Option<State>> {
-    for path in [state_path(root), legacy_state_path(root)] {
-        if path.exists() {
-            let data =
-                fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
-            return Ok(Some(serde_json::from_str(&data)?));
-        }
+    let path = state_path(root);
+    if path.exists() {
+        let data =
+            fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+        return Ok(Some(serde_json::from_str(&data)?));
     }
 
     Ok(None)
@@ -806,16 +1380,8 @@ fn config_path(root: &Path) -> PathBuf {
     root.join(STATE_DIR).join("config.json")
 }
 
-fn legacy_config_path(root: &Path) -> PathBuf {
-    root.join(LEGACY_STATE_DIR).join("config.json")
-}
-
 fn state_path(root: &Path) -> PathBuf {
     root.join(STATE_DIR).join("state.json")
-}
-
-fn legacy_state_path(root: &Path) -> PathBuf {
-    root.join(LEGACY_STATE_DIR).join("state.json")
 }
 
 fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<()> {
@@ -854,7 +1420,6 @@ fn default_ignores() -> Vec<String> {
     [
         ".git/",
         ".pathstash/",
-        ".devdrop/",
         "node_modules/",
         "target/",
         "dist/",
@@ -863,7 +1428,6 @@ fn default_ignores() -> Vec<String> {
         "internal/",
         "infra/live-test-token.txt",
         ".pathstashignore",
-        ".devdropignore",
         "bin/",
         "obj/",
         "Library/",
@@ -931,7 +1495,6 @@ mod tests {
         assert!(should_skip_path("node_modules/react/index.js", &ignores));
         assert!(should_skip_path("target/debug/app.exe", &ignores));
         assert!(should_skip_path(".pathstash/state.json", &ignores));
-        assert!(should_skip_path(".devdrop/state.json", &ignores));
         assert!(should_skip_path("internal/context/source.md", &ignores));
         assert!(should_skip_path("infra/live-test-token.txt", &ignores));
         assert!(!should_skip_path("src/main.rs", &ignores));
@@ -948,8 +1511,8 @@ mod tests {
     #[test]
     fn normalize_relay_trims_trailing_slash() {
         assert_eq!(
-            normalize_relay(" https://devdrop-relay.ifbars.workers.dev/ "),
-            "https://devdrop-relay.ifbars.workers.dev"
+            normalize_relay(" https://pathstash-relay.ifbars.workers.dev/ "),
+            "https://pathstash-relay.ifbars.workers.dev"
         );
     }
 }
