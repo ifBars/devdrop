@@ -1,0 +1,2340 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "PathStash Relay API",
+    "version": "0.1.0",
+    "description": "Account- and team-scoped workspace sync, tokens, devices, encrypted secrets, blobs, manifests, file inventory, audit events, and billing session endpoints for PathStash."
+  },
+  "servers": [
+    {
+      "url": "https://pathstash-relay.ifbars.workers.dev",
+      "description": "Hosted PathStash relay"
+    }
+  ],
+  "security": [
+    {
+      "bearerToken": []
+    }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "summary": "Check relay health",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Relay, database, and non-secret configuration status",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/RelayHealth" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/admin/email-test": {
+      "post": {
+        "summary": "Send an admin-gated transactional email smoke test",
+        "description": "Requires RELAY_ADMIN_TOKEN bearer auth. Sends a fixed PathStash email through the configured transactional email provider without creating an account.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["to"],
+                "properties": {
+                  "to": { "type": "string", "format": "email" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Smoke email accepted by the configured provider",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/EmailSmokeResponse" }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request body or recipient email"
+          },
+          "403": {
+            "description": "Relay admin token required"
+          },
+          "502": {
+            "description": "Configured provider rejected the smoke email"
+          },
+          "503": {
+            "description": "Transactional email is not configured",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/EmailSmokeResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/check": {
+      "get": {
+        "summary": "Check bearer or browser-session authentication",
+        "responses": {
+          "200": {
+            "description": "Authentication is valid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": { "type": "boolean" },
+                    "authenticated": { "type": "boolean" },
+                    "principal": { "type": "string", "enum": ["account", "admin"] }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication"
+          }
+        }
+      }
+    },
+    "/v1/auth/signup": {
+      "post": {
+        "summary": "Create a password account and send email verification",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["email", "password"],
+                "properties": {
+                  "email": { "type": "string", "format": "email" },
+                  "name": { "type": "string" },
+                  "password": { "type": "string", "minLength": 10 },
+                  "deviceLabel": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Pending account and verification delivery state",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SignupResponse" }
+              }
+            }
+          },
+          "202": {
+            "description": "Account created, but email delivery failed",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SignupResponse" }
+              }
+            }
+          },
+          "503": {
+            "description": "Email verification is not configured; production signup is temporarily unavailable"
+          },
+          "409": {
+            "description": "Account already exists"
+          },
+          "429": {
+            "description": "Signup is temporarily rate limited",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the client should retry.",
+                "schema": { "type": "integer" }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/RateLimitResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/verify-email": {
+      "post": {
+        "summary": "Verify account email with a one-time token",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["token"],
+                "properties": {
+                  "token": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Email verified",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/AuthTokenActionResponse" }
+              }
+            }
+          },
+          "400": { "description": "Invalid or expired verification token" },
+          "429": {
+            "description": "Verification attempts are temporarily rate limited",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the client should retry.",
+                "schema": { "type": "integer" }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/RateLimitResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/resend-verification": {
+      "post": {
+        "summary": "Resend a verification email for an unverified account",
+        "description": "Returns a generic success response for missing or already verified accounts so account existence is not exposed.",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["email"],
+                "properties": {
+                  "email": { "type": "string", "format": "email" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Verification resend request accepted",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/PasswordSetupRequestResponse" }
+              }
+            }
+          },
+          "202": {
+            "description": "Verification resend request accepted, but email delivery failed",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/PasswordSetupRequestResponse" }
+              }
+            }
+          },
+          "400": { "description": "Invalid email" },
+          "429": {
+            "description": "Resend attempts are temporarily rate limited",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the client should retry.",
+                "schema": { "type": "integer" }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/RateLimitResponse" }
+              }
+            }
+          },
+          "503": {
+            "description": "Email verification is not configured"
+          }
+        }
+      }
+    },
+    "/v1/auth/login": {
+      "post": {
+        "summary": "Log in with email and password",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["email", "password"],
+                "properties": {
+                  "email": { "type": "string", "format": "email" },
+                  "password": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Session cookie issued",
+            "headers": {
+              "Set-Cookie": {
+                "description": "HttpOnly pathstash_session cookie for browser dashboard access.",
+                "schema": { "type": "string" }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/LoginResponse" }
+              }
+            }
+          },
+          "401": { "description": "Invalid credentials" },
+          "403": { "description": "Email not verified" },
+          "429": {
+            "description": "Login is temporarily rate limited",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the client should retry.",
+                "schema": { "type": "integer" }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/RateLimitResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/request-password-setup": {
+      "post": {
+        "summary": "Send an email-verified password setup link",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["email"],
+                "properties": {
+                  "email": { "type": "string", "format": "email" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Generic password setup response",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/PasswordSetupRequestResponse" }
+              }
+            }
+          },
+          "429": {
+            "description": "Password setup requests are temporarily rate limited",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the client should retry.",
+                "schema": { "type": "integer" }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/RateLimitResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/complete-password-setup": {
+      "post": {
+        "summary": "Set a password with an email setup token",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["token", "password"],
+                "properties": {
+                  "token": { "type": "string" },
+                  "password": { "type": "string", "minLength": 10 }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Password set and email verified",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/AuthTokenActionResponse" }
+              }
+            }
+          },
+          "400": { "description": "Invalid or expired setup token" },
+          "429": {
+            "description": "Password setup completion is temporarily rate limited",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the client should retry.",
+                "schema": { "type": "integer" }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/RateLimitResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/request-email-change": {
+      "post": {
+        "summary": "Request an account email change",
+        "description": "Requires a browser session and current password. Sends a confirmation link to the new email address before changing the account email.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["newEmail", "currentPassword"],
+                "properties": {
+                  "newEmail": { "type": "string", "format": "email" },
+                  "currentPassword": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Email change verification link sent",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/PasswordSetupRequestResponse" }
+              }
+            }
+          },
+          "202": {
+            "description": "Email change accepted, but email delivery failed",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/PasswordSetupRequestResponse" }
+              }
+            }
+          },
+          "400": { "description": "Invalid email, unchanged email, or missing current password" },
+          "403": { "description": "Browser session required or current password is incorrect" },
+          "409": { "description": "Email is already in use" },
+          "429": {
+            "description": "Email change requests are temporarily rate limited",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the client should retry.",
+                "schema": { "type": "integer" }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/RateLimitResponse" }
+              }
+            }
+          },
+          "503": { "description": "Email delivery is not configured" }
+        }
+      }
+    },
+    "/v1/auth/complete-email-change": {
+      "post": {
+        "summary": "Confirm an account email change token",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["token"],
+                "properties": {
+                  "token": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Account email changed and verified",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/AuthTokenActionResponse" }
+              }
+            }
+          },
+          "400": { "description": "Invalid or expired email change token" },
+          "409": { "description": "Email is already in use" },
+          "429": {
+            "description": "Email change completion is temporarily rate limited",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the client should retry.",
+                "schema": { "type": "integer" }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/RateLimitResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/change-password": {
+      "post": {
+        "summary": "Change password for the current browser session",
+        "description": "Requires a browser session and the current password. API bearer tokens cannot change a human login password.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["currentPassword", "newPassword"],
+                "properties": {
+                  "currentPassword": { "type": "string" },
+                  "newPassword": { "type": "string", "minLength": 10 },
+                  "revokeOtherSessions": { "type": "boolean", "default": true }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Password changed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": { "type": "boolean" },
+                    "passwordUpdatedAt": { "type": "string", "format": "date-time" },
+                    "otherSessionsRevoked": { "type": "boolean" }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "description": "Missing current password or invalid new password" },
+          "403": { "description": "Browser session required or current password is incorrect" }
+        }
+      }
+    },
+    "/v1/auth/logout": {
+      "post": {
+        "summary": "Revoke the current browser session",
+        "responses": {
+          "200": {
+            "description": "Session cookie cleared",
+            "headers": {
+              "Set-Cookie": {
+                "description": "Expired pathstash_session cookie.",
+                "schema": { "type": "string" }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/OkResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/sessions": {
+      "get": {
+        "summary": "List browser sessions for the current account",
+        "responses": {
+          "200": {
+            "description": "Browser session inventory",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "sessions": {
+                      "type": "array",
+                      "items": { "$ref": "#/components/schemas/BrowserSession" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/sessions/{sessionId}": {
+      "delete": {
+        "summary": "Revoke a browser session",
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": { "description": "Session revoked" },
+          "404": { "description": "Session not found" }
+        }
+      }
+    },
+    "/v1/accounts": {
+      "post": {
+        "summary": "Legacy token-only account signup",
+        "description": "Hosted relays disable this by default and return 410 password_signup_required. Use /v1/auth/signup for password signup and email verification.",
+        "security": [],
+        "responses": {
+          "410": {
+            "description": "Password signup is required"
+          }
+        }
+      }
+    },
+    "/v1/me": {
+      "get": {
+        "summary": "Get account, devices, workspaces, subscription, usage, and entitlements",
+        "responses": {
+          "200": {
+            "description": "Authenticated account envelope",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/AccountEnvelope" }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "summary": "Update account profile",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["name"],
+                "properties": {
+                  "name": { "type": "string", "minLength": 1, "maxLength": 256 }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated account profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "account": { "$ref": "#/components/schemas/Account" }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid account profile update"
+          },
+          "403": {
+            "description": "Missing account write scope"
+          }
+        }
+      }
+    },
+    "/v1/me.md": {
+      "get": {
+        "summary": "Get account context as Markdown",
+        "responses": {
+          "200": {
+            "description": "Authenticated account context"
+          }
+        }
+      }
+    },
+    "/v1/me/export.json": {
+      "get": {
+        "summary": "Download account portability export",
+        "description": "Returns profile, plan, usage, devices, browser sessions, visible workspaces, teams, token metadata, secret inventory metadata, and recent audit events. Plaintext secret values and API token values are not included.",
+        "responses": {
+          "200": {
+            "description": "Account export JSON",
+            "headers": {
+              "Content-Disposition": {
+                "description": "Suggested account export filename.",
+                "schema": { "type": "string" }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/AccountExport" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/audit/events": {
+      "get": {
+        "summary": "List account audit events",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "integer", "minimum": 1, "maximum": 500 }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "workspaceId",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string", "format": "date-time" },
+            "description": "Return events created before this timestamp."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Recent account audit events",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/AuditEventsEnvelope" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/audit/events.ndjson": {
+      "get": {
+        "summary": "Export account audit events as NDJSON",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "integer", "minimum": 1, "maximum": 500 }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "workspaceId",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string", "format": "date-time" },
+            "description": "Return events created before this timestamp."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Newline-delimited audit event records",
+            "content": {
+              "application/x-ndjson": {
+                "schema": { "type": "string" }
+              }
+            }
+          },
+          "402": {
+            "description": "Team plan required for audit export"
+          }
+        }
+      }
+    },
+    "/v1/teams": {
+      "get": {
+        "summary": "List teams for the authenticated account",
+        "responses": {
+          "200": {
+            "description": "Active teams and pending invites for the account email",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/TeamsEnvelope" }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create a team",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Team details with owner membership",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/TeamDetails" }
+              }
+            }
+          },
+          "402": {
+            "description": "Team plan required"
+          }
+        }
+      }
+    },
+    "/v1/teams/{teamId}": {
+      "get": {
+        "summary": "Get team details",
+        "parameters": [
+          {
+            "name": "teamId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Team, active members, pending invites for managers, and shared workspaces",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/TeamDetails" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/teams/{teamId}/invites": {
+      "post": {
+        "summary": "Create a team invite",
+        "parameters": [
+          {
+            "name": "teamId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["email"],
+                "properties": {
+                  "email": { "type": "string", "format": "email" },
+                  "role": { "type": "string", "enum": ["member", "admin"] }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Pending invite. The one-time token, dashboard accept URL, and email delivery status are returned only in this response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "invite": { "$ref": "#/components/schemas/TeamInvite" }
+                  }
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "Team plan required"
+          }
+        }
+      }
+    },
+    "/v1/teams/{teamId}/invites/{inviteId}": {
+      "delete": {
+        "summary": "Revoke a pending team invite",
+        "parameters": [
+          {
+            "name": "teamId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "inviteId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Invite revoked and team details returned",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/TeamDetails" }
+              }
+            }
+          },
+          "403": {
+            "description": "Team admin role required"
+          }
+        }
+      }
+    },
+    "/v1/teams/invites/{inviteId}/accept": {
+      "post": {
+        "summary": "Accept a team invite",
+        "parameters": [
+          {
+            "name": "inviteId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["token"],
+                "properties": {
+                  "token": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Invite accepted and team details returned",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/TeamDetails" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/teams/{teamId}/members/{accountId}": {
+      "patch": {
+        "summary": "Update a team member role",
+        "parameters": [
+          {
+            "name": "teamId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "accountId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["role"],
+                "properties": {
+                  "role": { "type": "string", "enum": ["member", "admin"] }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Member role updated and team details returned",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/TeamDetails" }
+              }
+            }
+          },
+          "403": {
+            "description": "Team owner role required"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Remove a team member",
+        "parameters": [
+          {
+            "name": "teamId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "accountId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Member removed and team details returned"
+          },
+          "403": {
+            "description": "Team owner role required"
+          }
+        }
+      }
+    },
+    "/v1/tokens": {
+      "get": {
+        "summary": "List account tokens",
+        "responses": {
+          "200": {
+            "description": "Token list without token values",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/TokensEnvelope" }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create an account token",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": { "type": "string" },
+                  "expiresInDays": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 365,
+                    "description": "Optional token lifetime in days. Do not send with expiresAt."
+                  },
+                  "expiresAt": {
+                    "type": "string",
+                    "format": "date-time",
+                    "description": "Optional absolute expiration time. Do not send with expiresInDays."
+                  },
+                  "scopes": {
+                    "type": "array",
+                    "description": "Optional bearer-token scopes. Omit for full_access compatibility. full_access must be the only scope when present.",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                          "full_access",
+                          "account:read",
+                          "account:write",
+                          "workspace:read",
+                        "workspace:write",
+                        "secret:read",
+                        "secret:write",
+                        "device:read",
+                        "device:write",
+                        "token:manage",
+                        "team:read",
+                        "team:write",
+                        "audit:read",
+                        "billing:write"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "New token value returned once",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/TokenCreateEnvelope" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/tokens/{tokenId}": {
+      "delete": {
+        "summary": "Revoke an account token",
+        "parameters": [
+          {
+            "name": "tokenId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Token revoked"
+          }
+        }
+      }
+    },
+    "/v1/devices": {
+      "get": {
+        "summary": "List account devices",
+        "responses": {
+          "200": {
+            "description": "Device list",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/DevicesEnvelope" }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Register an account device",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "label": { "type": "string" },
+                  "publicKey": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Registered device",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "device": { "$ref": "#/components/schemas/Device" }
+                  }
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "Plan device limit reached"
+          }
+        }
+      }
+    },
+    "/v1/devices/{deviceId}": {
+      "delete": {
+        "summary": "Revoke an account device",
+        "parameters": [
+          {
+            "name": "deviceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Device revoked"
+          }
+        }
+      }
+    },
+    "/v1/workspaces": {
+      "get": {
+        "summary": "List workspaces visible to the authenticated account",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string", "enum": ["active", "archived", "all"], "default": "active" },
+            "description": "List active workspaces by default. Use archived for soft-archived rows or all for both."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Solo and shared team workspaces visible to the caller",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/WorkspacesEnvelope" }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create a workspace",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": { "type": "string" },
+                  "rootPath": { "type": "string" },
+                  "teamId": {
+                    "type": "string",
+                    "description": "Optional team id. Requires an active Team entitlement and active team membership."
+                  },
+                  "device": {
+                    "type": "object",
+                    "properties": {
+                      "id": { "type": "string" },
+                      "label": { "type": "string" },
+                      "publicKey": { "type": "string" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Workspace metadata"
+          },
+          "402": {
+            "description": "Plan workspace limit reached, or device limit reached when registering an initial workspace device"
+          }
+        }
+      }
+    },
+    "/v1/workspaces/{workspaceId}": {
+      "get": {
+        "summary": "Get workspace metadata",
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Workspace metadata",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Workspace" }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "summary": "Update workspace name or root path",
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": { "type": "string" },
+                  "rootPath": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Workspace updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": { "type": "boolean" },
+                    "workspace": { "$ref": "#/components/schemas/Workspace" }
+                  }
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "Plan workspace limit reached"
+          },
+          "403": {
+            "description": "Workspace admin role required"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Archive a workspace",
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Workspace archived and hidden from normal account and agent flows",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": { "type": "boolean" },
+                    "deletedAt": { "type": "string", "format": "date-time" }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Workspace admin role required"
+          }
+        }
+      }
+    },
+    "/v1/workspaces/{workspaceId}/restore": {
+      "post": {
+        "summary": "Restore an archived workspace",
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Workspace restored and visible in normal account and agent flows",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": { "type": "boolean" },
+                    "workspace": { "$ref": "#/components/schemas/Workspace" },
+                    "restoredAt": { "type": "string", "format": "date-time" }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Workspace admin role required"
+          }
+        }
+      }
+    },
+    "/v1/workspaces/{workspaceId}/manifest": {
+      "get": {
+        "summary": "Get current workspace manifest",
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Manifest envelope"
+          }
+        }
+      },
+      "put": {
+        "summary": "Store current workspace manifest",
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": { "type": "object" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Stored manifest hash and version"
+          }
+        }
+      }
+    },
+    "/v1/workspaces/{workspaceId}/manifest.md": {
+      "get": {
+        "summary": "Get workspace manifest as Markdown",
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Agent-readable manifest summary"
+          }
+        }
+      }
+    },
+    "/v1/workspaces/{workspaceId}/files": {
+      "get": {
+        "summary": "Get manifest-derived file inventory",
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "maxBlobBytes",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "integer", "minimum": 1 },
+            "description": "Blob limit used to classify large files. Defaults to 67108864 bytes."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Workspace file inventory with totals, large file entries, and manifest metadata"
+          },
+          "404": {
+            "description": "Workspace or manifest not found"
+          }
+        }
+      }
+    },
+    "/v1/workspaces/{workspaceId}/secrets": {
+      "get": {
+        "summary": "List encrypted secret inventory",
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Secret names, key ids, formats, metadata, and timestamps without ciphertext"
+          }
+        }
+      }
+    },
+    "/v1/workspaces/{workspaceId}/secrets/{name}": {
+      "get": {
+        "summary": "Get encrypted workspace secret record",
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Encrypted secret record including ciphertext, nonce, key id, format, metadata, and timestamps"
+          }
+        }
+      },
+      "put": {
+        "summary": "Store encrypted workspace secret",
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["ciphertext", "nonce", "keyId"],
+                "properties": {
+                  "ciphertext": { "type": "string" },
+                  "nonce": { "type": "string" },
+                  "keyId": { "type": "string" },
+                  "format": { "type": "string" },
+                  "metadata": { "type": "object" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Encrypted secret stored"
+          },
+          "402": {
+            "description": "Plan secret limit reached"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete encrypted workspace secret",
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Secret tombstoned"
+          }
+        }
+      }
+    },
+    "/v1/blobs/{sha256}": {
+      "get": {
+        "summary": "Download content-addressed blob",
+        "parameters": [
+          {
+            "name": "sha256",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Blob bytes"
+          }
+        }
+      },
+      "put": {
+        "summary": "Upload content-addressed blob",
+        "parameters": [
+          {
+            "name": "sha256",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/octet-stream": {
+              "schema": { "type": "string", "format": "binary" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Blob stored"
+          },
+          "411": {
+            "description": "Content-Length is required for account blob uploads"
+          },
+          "402": {
+            "description": "Plan storage limit reached"
+          },
+          "409": {
+            "description": "Blob hash was previously recorded for this account with a different size"
+          },
+          "413": {
+            "description": "Plan blob-size limit reached"
+          }
+        }
+      }
+    },
+    "/v1/billing/subscription": {
+      "get": {
+        "summary": "Get account subscription, usage, and entitlements",
+        "responses": {
+          "200": {
+            "description": "Current plan, Stripe subscription status, account usage, and active plan entitlements",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/BillingEnvelope" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/billing/checkout": {
+      "post": {
+        "summary": "Create a Stripe Checkout Session",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["plan"],
+                "properties": {
+                  "plan": { "type": "string", "enum": ["pro", "team"] }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Checkout URL",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/BillingSessionResponse" }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid plan"
+          },
+          "502": {
+            "description": "Stripe checkout failed or returned an unexpected session payload"
+          },
+          "503": {
+            "description": "Billing or Stripe webhook signing is not configured"
+          }
+        }
+      }
+    },
+    "/v1/billing/checkout/sync": {
+      "post": {
+        "summary": "Sync a returned Stripe Checkout Session",
+        "description": "Retrieves a Checkout Session after redirect, verifies ownership, and updates local subscription state once the session is complete.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["sessionId"],
+                "properties": {
+                  "sessionId": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Checkout session synced",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/BillingEnvelope" }
+              }
+            }
+          },
+          "400": { "description": "Invalid checkout session id" },
+          "404": { "description": "Checkout session does not belong to the account" },
+          "409": { "description": "Checkout session is not complete yet" },
+          "502": { "description": "Stripe checkout sync failed" },
+          "503": { "description": "Billing is not configured" }
+        }
+      }
+    },
+    "/v1/billing/sync": {
+      "post": {
+        "summary": "Sync the stored Stripe subscription",
+        "description": "Retrieves the account's stored Stripe subscription and reapplies the latest plan, status, and current period after customer-portal changes or webhook lag.",
+        "responses": {
+          "200": {
+            "description": "Subscription synced from Stripe",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/BillingEnvelope" }
+              }
+            }
+          },
+          "409": { "description": "stripe_subscription_required: a Stripe subscription id is required before subscription sync can run" },
+          "502": { "description": "stripe_subscription_sync_failed: Stripe subscription sync failed" },
+          "503": { "description": "Billing is not configured" }
+        }
+      }
+    },
+    "/v1/billing/portal": {
+      "post": {
+        "summary": "Create a Stripe customer portal session",
+        "responses": {
+          "200": {
+            "description": "Portal URL",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/BillingSessionResponse" }
+              }
+            }
+          },
+          "409": {
+            "description": "Stripe customer id is required before a portal session can be created"
+          },
+          "502": {
+            "description": "Stripe customer portal failed or returned an unexpected session payload"
+          },
+          "503": {
+            "description": "Billing is not configured"
+          }
+        }
+      }
+    },
+    "/v1/billing/webhook": {
+      "post": {
+        "summary": "Receive Stripe subscription webhook events",
+        "security": [],
+        "parameters": [
+          {
+            "name": "Stripe-Signature",
+            "in": "header",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Stripe webhook signature header used to verify the raw payload within the five-minute freshness window."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "type": "object" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Webhook accepted. Duplicate processed Stripe event ids return duplicate: true without replaying side effects.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/OkResponse" }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing or invalid Stripe signature"
+          },
+          "409": {
+            "description": "A previous delivery for the same Stripe event id is still processing"
+          },
+          "503": {
+            "description": "Stripe webhook secret is not configured"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerToken": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    },
+    "schemas": {
+      "RelayHealth": {
+        "type": "object",
+        "properties": {
+          "ok": { "type": "boolean" },
+          "service": { "type": "string" },
+          "environment": { "type": "string" },
+          "database": { "type": "string" },
+          "configuration": {
+            "type": "object",
+            "properties": {
+              "email": { "$ref": "#/components/schemas/ConfigurationStatus" },
+              "billing": { "$ref": "#/components/schemas/BillingConfigurationStatus" }
+            }
+          },
+          "at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "EmailSmokeResponse": {
+        "type": "object",
+        "properties": {
+          "ok": { "type": "boolean" },
+          "provider": { "type": "string", "enum": ["resend", "postmark", "brevo", "mailgun"] },
+          "to": { "type": "string", "format": "email" },
+          "delivery": {
+            "type": "object",
+            "properties": {
+              "status": { "type": "string", "enum": ["sent", "failed", "unconfigured"] },
+              "providerId": { "type": "string" }
+            }
+          },
+          "missing": { "type": "array", "items": { "type": "string" } }
+        }
+      },
+      "ConfigurationStatus": {
+        "type": "object",
+        "properties": {
+          "configured": { "type": "boolean" },
+          "status": { "type": "string", "enum": ["configured", "unconfigured"] },
+          "provider": { "type": "string" },
+          "missing": { "type": "array", "items": { "type": "string" } },
+          "features": { "type": "array", "items": { "type": "string" } },
+          "setupActions": { "type": "array", "items": { "type": "string" } }
+        }
+      },
+      "BillingConfigurationStatus": {
+        "allOf": [
+          { "$ref": "#/components/schemas/ConfigurationStatus" },
+          {
+            "type": "object",
+            "properties": {
+              "webhookConfigured": { "type": "boolean" },
+              "webhookMissing": { "type": "array", "items": { "type": "string" } },
+              "portalReturnUrlConfigured": { "type": "boolean" },
+              "plans": {
+                "type": "object",
+                "properties": {
+                  "pro": { "type": "boolean" },
+                  "team": { "type": "boolean" }
+                }
+              }
+            }
+          }
+        ]
+      },
+      "AccountEnvelope": {
+        "type": "object",
+        "properties": {
+          "account": { "type": "object" },
+          "devices": { "type": "array", "items": { "type": "object" } },
+          "workspaces": { "type": "array", "items": { "$ref": "#/components/schemas/Workspace" } },
+          "subscription": { "$ref": "#/components/schemas/BillingSubscription" },
+          "entitlements": { "$ref": "#/components/schemas/PlanEntitlements" },
+          "usage": { "$ref": "#/components/schemas/AccountUsage" }
+        }
+      },
+      "AccountExport": {
+        "type": "object",
+        "properties": {
+          "exportedAt": { "type": "string", "format": "date-time" },
+          "account": { "$ref": "#/components/schemas/Account" },
+          "principal": { "type": "string", "enum": ["session", "access_token"] },
+          "subscription": { "$ref": "#/components/schemas/BillingSubscription" },
+          "entitlements": { "$ref": "#/components/schemas/PlanEntitlements" },
+          "usage": { "$ref": "#/components/schemas/AccountUsage" },
+          "devices": { "type": "array", "items": { "$ref": "#/components/schemas/Device" } },
+          "sessions": { "type": "array", "items": { "$ref": "#/components/schemas/BrowserSession" } },
+          "workspaces": { "type": "array", "items": { "$ref": "#/components/schemas/Workspace" } },
+          "teams": { "type": "object" },
+          "tokens": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Token" },
+            "description": "Token metadata only. Token values are not included."
+          },
+          "secrets": {
+            "type": "object",
+            "description": "Secret inventory metadata only. Plaintext values and ciphertext payloads are not included.",
+            "properties": {
+              "plaintextValuesIncluded": { "type": "boolean", "const": false },
+              "inventories": { "type": "array", "items": { "type": "object" } }
+            }
+          },
+          "auditEvents": { "type": "array", "items": { "$ref": "#/components/schemas/AuditEvent" } }
+        }
+      },
+      "BillingEnvelope": {
+        "type": "object",
+        "properties": {
+          "ok": { "type": "boolean" },
+          "subscriptionSynced": {
+            "type": "boolean",
+            "description": "Present on checkout sync responses. True when the linked Stripe subscription was fetched and applied immediately."
+          },
+          "subscription": { "$ref": "#/components/schemas/BillingSubscription" },
+          "entitlements": { "$ref": "#/components/schemas/PlanEntitlements" },
+          "usage": { "$ref": "#/components/schemas/AccountUsage" }
+        }
+      },
+      "SignupResponse": {
+        "type": "object",
+        "properties": {
+          "account": { "$ref": "#/components/schemas/Account" },
+          "verificationRequired": { "type": "boolean" },
+          "verificationDelivery": {
+            "type": "string",
+            "enum": ["sent", "failed", "unconfigured"]
+          },
+          "verificationExpiresAt": { "type": "string", "format": "date-time" },
+          "verificationUrl": {
+            "type": "string",
+            "format": "uri",
+            "description": "Development-only fallback link when email is unconfigured outside production."
+          }
+        }
+      },
+      "LoginResponse": {
+        "type": "object",
+        "properties": {
+          "ok": { "type": "boolean" },
+          "account": { "$ref": "#/components/schemas/Account" },
+          "session": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "expiresAt": { "type": "string", "format": "date-time" }
+            }
+          }
+        }
+      },
+      "PasswordSetupRequestResponse": {
+        "type": "object",
+        "properties": {
+          "ok": { "type": "boolean" },
+          "verificationDelivery": {
+            "type": "string",
+            "enum": ["sent", "failed", "unconfigured", "not_sent"]
+          },
+          "verificationExpiresAt": { "type": "string", "format": "date-time" },
+          "verificationUrl": {
+            "type": "string",
+            "format": "uri",
+            "description": "Development-only fallback link when email is unconfigured outside production."
+          }
+        }
+      },
+      "AuthTokenActionResponse": {
+        "type": "object",
+        "properties": {
+          "ok": { "type": "boolean" },
+          "email": { "type": "string", "format": "email" },
+          "verifiedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "OkResponse": {
+        "type": "object",
+        "properties": {
+          "ok": { "type": "boolean" }
+        }
+      },
+      "RateLimitResponse": {
+        "type": "object",
+        "properties": {
+          "error": { "type": "string", "enum": ["rate_limited"] },
+          "retryAfterSeconds": { "type": "integer", "minimum": 1 }
+        }
+      },
+      "BillingSessionResponse": {
+        "type": "object",
+        "properties": {
+          "url": { "type": "string", "format": "uri" },
+          "sessionId": { "type": "string" }
+        }
+      },
+      "Account": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "email": { "type": "string", "format": "email" },
+          "name": { "type": "string" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updated_at": { "type": "string", "format": "date-time" },
+          "emailVerified": { "type": "boolean" },
+          "email_verified_at": { "type": ["string", "null"], "format": "date-time" }
+        }
+      },
+      "AuditEventsEnvelope": {
+        "type": "object",
+        "properties": {
+          "events": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/AuditEvent" }
+          }
+        }
+      },
+      "DevicesEnvelope": {
+        "type": "object",
+        "properties": {
+          "devices": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Device" }
+          }
+        }
+      },
+      "Device": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "account_id": { "type": "string" },
+          "workspace_id": { "type": ["string", "null"] },
+          "label": { "type": "string" },
+          "publicKey": { "type": ["string", "null"] },
+          "public_key": { "type": ["string", "null"] },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "created_at": { "type": "string", "format": "date-time" },
+          "last_seen_at": { "type": ["string", "null"], "format": "date-time" },
+          "revoked_at": { "type": ["string", "null"], "format": "date-time" }
+        }
+      },
+      "BrowserSession": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "created_at": { "type": "string", "format": "date-time" },
+          "expires_at": { "type": "string", "format": "date-time" },
+          "last_seen_at": { "type": "string", "format": "date-time" },
+          "revoked_at": { "type": ["string", "null"], "format": "date-time" },
+          "user_agent": { "type": ["string", "null"] },
+          "current": { "type": "boolean" },
+          "status": { "type": "string", "enum": ["active", "expired", "revoked"] }
+        }
+      },
+      "TokensEnvelope": {
+        "type": "object",
+        "properties": {
+          "tokens": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Token" }
+          }
+        }
+      },
+      "TokenCreateEnvelope": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "allOf": [
+              { "$ref": "#/components/schemas/Token" },
+              {
+                "type": "object",
+                "properties": {
+                  "value": {
+                    "type": "string",
+                    "description": "Returned only when the token is created."
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "Token": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "created_at": { "type": "string", "format": "date-time" },
+          "expiresAt": { "type": ["string", "null"], "format": "date-time" },
+          "expires_at": { "type": ["string", "null"], "format": "date-time" },
+          "last_used_at": { "type": ["string", "null"], "format": "date-time" },
+          "revoked_at": { "type": ["string", "null"], "format": "date-time" },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                  "full_access",
+                  "account:read",
+                  "account:write",
+                  "workspace:read",
+                "workspace:write",
+                "secret:read",
+                "secret:write",
+                "device:read",
+                "device:write",
+                "token:manage",
+                "team:read",
+                "team:write",
+                "audit:read",
+                "billing:write"
+              ]
+            }
+          }
+        }
+      },
+      "TeamsEnvelope": {
+        "type": "object",
+        "properties": {
+          "teams": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/TeamSummary" }
+          },
+          "pendingInvites": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/TeamInvite" }
+          }
+        }
+      },
+      "WorkspacesEnvelope": {
+        "type": "object",
+        "properties": {
+          "workspaces": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Workspace" }
+          }
+        }
+      },
+      "TeamDetails": {
+        "type": "object",
+        "properties": {
+          "team": { "$ref": "#/components/schemas/TeamSummary" },
+          "members": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/TeamMember" }
+          },
+          "invites": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/TeamInvite" }
+          },
+          "workspaces": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Workspace" }
+          }
+        }
+      },
+      "TeamSummary": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "accountId": { "type": "string" },
+          "name": { "type": "string" },
+          "slug": { "type": "string" },
+          "role": { "type": "string", "enum": ["owner", "admin", "member"] },
+          "counts": {
+            "type": "object",
+            "properties": {
+              "members": { "type": "integer", "minimum": 0 },
+              "pendingInvites": { "type": "integer", "minimum": 0 },
+              "workspaces": { "type": "integer", "minimum": 0 }
+            }
+          },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "TeamMember": {
+        "type": "object",
+        "properties": {
+          "teamId": { "type": "string" },
+          "accountId": { "type": "string" },
+          "email": { "type": ["string", "null"], "format": "email" },
+          "name": { "type": ["string", "null"] },
+          "role": { "type": "string", "enum": ["owner", "admin", "member"] },
+          "status": { "type": "string" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "TeamInvite": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "teamId": { "type": "string" },
+          "teamName": { "type": "string" },
+          "teamSlug": { "type": "string" },
+          "email": { "type": "string", "format": "email" },
+          "role": { "type": "string", "enum": ["member", "admin"] },
+          "status": { "type": "string" },
+          "expiresAt": { "type": "string", "format": "date-time" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "acceptedAt": { "type": ["string", "null"], "format": "date-time" },
+          "token": {
+            "type": "string",
+            "description": "Returned only when the invite is created."
+          },
+          "acceptEndpoint": {
+            "type": "string",
+            "format": "uri",
+            "description": "Returned only when the invite is created."
+          },
+          "acceptUrl": {
+            "type": "string",
+            "format": "uri",
+            "description": "Dashboard accept link returned only when the invite is created."
+          },
+          "inviteDelivery": {
+            "type": "string",
+            "enum": ["sent", "failed", "unconfigured"],
+            "description": "Email delivery status returned only when the invite is created."
+          },
+          "inviteDeliveryProviderId": {
+            "type": "string",
+            "description": "Email provider id when delivery succeeds."
+          }
+        }
+      },
+      "Workspace": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "accountId": { "type": ["string", "null"] },
+          "account_id": { "type": ["string", "null"] },
+          "teamId": { "type": ["string", "null"] },
+          "team_id": { "type": ["string", "null"] },
+          "teamName": { "type": ["string", "null"] },
+          "team_name": { "type": ["string", "null"] },
+          "teamRole": { "type": ["string", "null"], "enum": ["owner", "admin", "member", null] },
+          "team_role": { "type": ["string", "null"], "enum": ["owner", "admin", "member", null] },
+          "name": { "type": "string" },
+          "rootPath": { "type": "string" },
+          "root_path": { "type": "string" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "created_at": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" },
+          "updated_at": { "type": "string", "format": "date-time" },
+          "deletedAt": { "type": ["string", "null"], "format": "date-time" },
+          "deleted_at": { "type": ["string", "null"], "format": "date-time" }
+        }
+      },
+      "AuditEvent": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "kind": { "type": "string" },
+          "actor": {
+            "type": "object",
+            "properties": {
+              "kind": { "type": "string" },
+              "tokenId": { "type": ["string", "null"] }
+            }
+          },
+          "target": {
+            "type": "object",
+            "properties": {
+              "type": { "type": ["string", "null"] },
+              "id": { "type": ["string", "null"] }
+            }
+          },
+          "workspaceId": { "type": ["string", "null"] },
+          "metadata": { "type": "object" },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "BillingSubscription": {
+        "type": "object",
+        "properties": {
+          "account_id": { "type": "string" },
+          "plan": { "type": "string", "enum": ["free", "pro", "team"] },
+          "status": { "type": "string" },
+          "stripe_customer_id": { "type": ["string", "null"] },
+          "stripe_subscription_id": { "type": ["string", "null"] },
+          "stripe_checkout_session_id": { "type": ["string", "null"] },
+          "current_period_end": { "type": ["string", "null"], "format": "date-time" },
+          "created_at": { "type": "string", "format": "date-time" },
+          "updated_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "PlanEntitlements": {
+        "type": "object",
+        "properties": {
+          "plan": { "type": "string", "enum": ["free", "pro", "team"] },
+          "devices": { "type": ["integer", "null"], "minimum": 0 },
+          "workspaces": { "type": ["integer", "null"], "minimum": 0 },
+          "secrets": { "type": ["integer", "null"], "minimum": 0 },
+          "storageBytes": { "type": "integer", "minimum": 0 },
+          "maxBlobBytes": { "type": "integer", "minimum": 0 },
+          "sharedVaultPolicies": { "type": "boolean" },
+          "auditLogExport": { "type": "boolean" }
+        }
+      },
+      "AccountUsage": {
+        "type": "object",
+        "properties": {
+          "devices": { "type": "integer", "minimum": 0 },
+          "secrets": { "type": "integer", "minimum": 0 },
+          "workspaces": { "type": "integer", "minimum": 0 },
+          "blobs": { "type": "integer", "minimum": 0 },
+          "storageBytes": { "type": "integer", "minimum": 0 }
+        }
+      }
+    }
+  }
+}

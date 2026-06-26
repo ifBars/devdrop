@@ -1,0 +1,15 @@
+User-agent: *
+Allow: /
+
+User-agent: GPTBot
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: Google-Extended
+Allow: /
+
+Content-Signal: search=yes, ai-input=yes, ai-train=no
+
+Sitemap: https://pathstash.ifbars.workers.dev/sitemap.xml

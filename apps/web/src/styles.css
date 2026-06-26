@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@500;600;700;800&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@500;600;700;800&display=swap");
 
 @tailwind base;
 @tailwind components;
@@ -6,12 +6,13 @@
 
 :root {
   font-family: "Geist", ui-sans-serif, system-ui, sans-serif;
-  color: #11110f;
-  background: #f7f7f4;
+  color: #16150f;
+  background: #f5f4ef;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  --paper: #f5f4ef;
 }
 
 html {
@@ -21,15 +22,136 @@ html {
 body {
   margin: 0;
   min-width: 320px;
+  background: var(--paper);
+  text-wrap: pretty;
+}
+
+/* Keep anchored sections clear of the sticky header */
+section[id] {
+  scroll-margin-top: 4.5rem;
 }
 
 button,
-input {
+input,
+textarea {
   font: inherit;
 }
 
 ::selection {
-  background: rgba(6, 95, 70, 0.18);
+  background: rgba(31, 82, 51, 0.18);
+}
+
+/* Tabular numbers for data and prices */
+.nums {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+/* Display headlines */
+.display {
+  font-family: "Outfit", "Geist", ui-sans-serif, system-ui, sans-serif;
+  text-wrap: balance;
+  letter-spacing: -0.025em;
+}
+
+/* Editorial label / eyebrow */
+.eyebrow {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+/* Subtle paper grain overlay */
+.grain::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  opacity: 0.04;
+  mix-blend-mode: multiply;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* Reveal-on-scroll — starts hidden, IntersectionObserver adds .is-in */
+.reveal {
+  opacity: 0;
+  transform: translateY(16px);
+  transition: opacity 0.7s cubic-bezier(0.22, 1, 0.36, 1), transform 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: opacity, transform;
+}
+.reveal.is-in {
+  opacity: 1;
+  transform: none;
+}
+
+/* Tinted dotted grid for surfaces */
+.grid-fade {
+  background-image: radial-gradient(rgba(22, 21, 15, 0.07) 1px, transparent 1px);
+  background-size: 22px 22px;
+  -webkit-mask-image: radial-gradient(ellipse 75% 65% at 50% 40%, #000 30%, transparent 75%);
+  mask-image: radial-gradient(ellipse 75% 65% at 50% 40%, #000 30%, transparent 75%);
+}
+
+/* Focus ring */
+.focus-ring:focus-visible {
+  outline: 2px solid #1f5233;
+  outline-offset: 2px;
+}
+
+/* Press feedback for buttons */
+.press {
+  transition: transform 0.18s cubic-bezier(0.22, 1, 0.36, 1), background-color 0.2s ease, border-color 0.2s ease,
+    box-shadow 0.2s ease, color 0.2s ease;
+}
+.press:hover {
+  transform: translateY(-1px);
+}
+.press:active {
+  transform: translateY(0.5px) scale(0.99);
+}
+
+/* Shimmer skeleton */
+.skeleton {
+  background: linear-gradient(90deg, rgba(22, 21, 15, 0.05) 25%, rgba(22, 21, 15, 0.1) 37%, rgba(22, 21, 15, 0.05) 63%);
+  background-size: 200% 100%;
+}
+
+/* Marker-pen highlight swipe (forest-tinted, sits on cream paper) */
+.mark {
+  background: linear-gradient(180deg, transparent 58%, rgba(123, 169, 136, 0.45) 58%, rgba(123, 169, 136, 0.28) 95%);
+  padding: 0 0.06em;
+  border-radius: 0.1em;
+}
+
+/* Ambient floating idle — uses the standalone `translate` property so it
+   composes with Tailwind's `transform` (rotate/scale) without clobbering it. */
+@keyframes float {
+  0%,
+  100% {
+    translate: 0 0;
+  }
+  50% {
+    translate: 0 -10px;
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .floating {
+    animation: float 6s ease-in-out infinite;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal {
+    opacity: 1 !important;
+    transform: none !important;
+    transition: none !important;
+  }
+  .press:hover,
+  .press:active {
+    transform: none !important;
+  }
 }
 
 @media (max-width: 760px) {

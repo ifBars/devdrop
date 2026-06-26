@@ -1,0 +1,19 @@
+{
+  "$schema": "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
+  "skills": [
+    {
+      "name": "pathstash-quickstart",
+      "type": "skill-md",
+      "description": "Use PathStash public discovery, bearer-token auth, account markdown, workspace manifests, and file inventory safely.",
+      "url": "https://pathstash.ifbars.workers.dev/.well-known/agent-skills/pathstash-quickstart/SKILL.md",
+      "digest": "sha256:c61848a55533bfa97658fde5486cc09beb61148d8f8c7696c75a0aa8f476d874"
+    },
+    {
+      "name": "pathstash-project-sidecar",
+      "type": "skill-md",
+      "description": "Use PathStash as the repo-adjacent project context layer around Git: sidecars, encrypted secret inventories, internal docs, artifacts, branding references, and cross-machine handoff state.",
+      "url": "https://pathstash.ifbars.workers.dev/.well-known/agent-skills/pathstash-project-sidecar/SKILL.md",
+      "digest": "sha256:2c88fad2dc3e588ede0c9fbd0002d451e744c043dc79e99ae483106c36bfd9bd"
+    }
+  ]
+}

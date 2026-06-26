@@ -1,14 +1,50 @@
 # PathStash
 
-PathStash is Dropbox for modern software developers. It keeps the layer around Git available across machines and agents: workspace roots, selected files, devices, encrypted secrets, manifests, and large file pointers.
+PathStash is the developer workspace layer around Git. It is Dropbox-like consistency for developer workspaces, but with repo-aware rules: workspace roots, selected files, generated-folder ignores, devices, encrypted secret records, manifests, internal docs, concept assets, and large file pointers stay available across machines and agents.
 
 ## Useful links
 
+- Dashboard: https://pathstash.ifbars.workers.dev/dashboard
+- Team dashboard: https://pathstash.ifbars.workers.dev/dashboard/teams
+- Security dashboard: https://pathstash.ifbars.workers.dev/dashboard/security
+- Agent context page: https://pathstash.ifbars.workers.dev/dashboard/agents
+- Authentication guidance: https://pathstash.ifbars.workers.dev/auth.md
+- Protected resource metadata: https://pathstash.ifbars.workers.dev/.well-known/oauth-protected-resource
+- OpenAPI catalog: https://pathstash.ifbars.workers.dev/openapi.json
+- MCP server card: https://pathstash.ifbars.workers.dev/.well-known/mcp/server-card.json
+- MCP discovery alias: https://pathstash.ifbars.workers.dev/.well-known/mcp-server
+- WebMCP manifest: https://pathstash.ifbars.workers.dev/.well-known/webmcp
+- WebMCP JSON alias: https://pathstash.ifbars.workers.dev/.well-known/webmcp.json
+- A2A agent card: https://pathstash.ifbars.workers.dev/.well-known/agent-card.json
+- Agent Skills index: https://pathstash.ifbars.workers.dev/.well-known/agent-skills/index.json
+- Agent Skills compatibility index: https://pathstash.ifbars.workers.dev/.well-known/skills/index.json
+- Project sidecar skill: https://pathstash.ifbars.workers.dev/.well-known/agent-skills/pathstash-project-sidecar/SKILL.md
+- Historical AI plugin manifest: https://pathstash.ifbars.workers.dev/.well-known/ai-plugin.json
+- Remote MCP endpoint: https://pathstash.ifbars.workers.dev/mcp
+- Sitemap: https://pathstash.ifbars.workers.dev/sitemap.xml
+- Relay workspaces: https://pathstash-relay.ifbars.workers.dev/v1/workspaces (`?status=archived` or `?status=all` for archived metadata)
+- Relay account export: https://pathstash-relay.ifbars.workers.dev/v1/me/export.json (metadata-only; no plaintext secrets or token values)
+- Relay file inventory: https://pathstash-relay.ifbars.workers.dev/v1/workspaces/{workspaceId}/files
+- Relay teams: https://pathstash-relay.ifbars.workers.dev/v1/teams
+- Relay audit events: https://pathstash-relay.ifbars.workers.dev/v1/audit/events
 - Quickstart: https://github.com/ifBars/pathstash/blob/main/docs/quickstart.md
 - Relay API: https://github.com/ifBars/pathstash/blob/main/docs/api.md
 - Agent guide: https://github.com/ifBars/pathstash/blob/main/docs/agents.md
-- MCP package: https://github.com/ifBars/pathstash/tree/main/packages/mcp
+- Local MCP package: https://github.com/ifBars/pathstash/tree/main/packages/mcp
+
+## Quick run
+
+```sh
+npx pathstash help
+npx pathstash login --token <dashboard-api-token>
+npx pathstash sidecar init --root . --name "Project Context"
+npx pathstash push --root .pathstash-context
+```
+
+Create and verify the account in the dashboard first. Browser login uses a password and email verification; CLI, CI, and agent clients use explicit scoped API tokens.
 
 ## Agent guidance
 
-Use markdown endpoints for compact context and JSON endpoints for exact state. Never send plaintext secrets to the relay; PathStash secret values are encrypted locally before storage.
+Use markdown endpoints for compact context, JSON endpoints for exact state, and the remote MCP endpoint for tool discovery. Git/GitHub remains the source of truth for source code; PathStash stores the surrounding workspace context, team sidecars, encrypted secrets, manifests, and large file pointers. Never send plaintext secrets to the relay; PathStash secret values are encrypted locally before storage.
+
+PathStash is not a general shared drive or enterprise content-management suite. Use Box, Dropbox, Google Drive, or OneDrive for broad company file sharing. Use PathStash when the important problem is restoring developer project context across machines, teams, CI, and agents: fresh repo awareness, known local project roots, encrypted environment-secret records, sidecar files, and private context without putting that state into Git.
